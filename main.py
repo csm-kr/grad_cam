@@ -45,7 +45,7 @@ def main():
 
     transform = transforms.Compose([
         transforms.Resize((300, 300)),
-        transforms.RandomCrop(256),
+        transforms.RandomCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean, std)
     ])

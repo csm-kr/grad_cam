@@ -13,9 +13,9 @@ class Grad_Cam(nn.Module):
         self.register_hooks()
 
         self.label = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
-         'bus', 'car', 'cat', 'chair', 'cow',
-         'diningtable', 'dog', 'horse', 'motorbike', 'person',
-         'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
+                      'bus', 'car', 'cat', 'chair', 'cow',
+                      'diningtable', 'dog', 'horse', 'motorbike', 'person',
+                      'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
 
     def register_hooks(self):
 
@@ -29,42 +29,38 @@ class Grad_Cam(nn.Module):
     def forward(self, input, target_index, img):
 
         outs = self.model(input).squeeze()
+        # backward를 통해서 자동으로 backward_hook 함수가 호출되고, self.backward_result에 gradient가 저장됩니다.
+        outs[target_index].backward(retain_graph=True)
+        # gradient의 평균을 구합니다. (alpha_k^c)
+        a_k = torch.mean(self.backward_result, dim=(1, 2), keepdim=True)
+        # self.foward_result를 이용하여 Grad-CAM을 계산합니다.
+        out = torch.sum(a_k * self.forward_result, dim=0).cpu()
+        # normalize
+        out = (out + torch.abs(out)) / 2
+        out = out / torch.max(out)
+        out = F.upsample_bilinear(out.unsqueeze(0).unsqueeze(0), [224, 224])  # 4D로 바꿈
 
-        # ---------------------------------- for one targets ----------------------------------
-        # # backward를 통해서 자동으로 backward_hook 함수가 호출되고, self.backward_result에 gradient가 저장됩니다.
-        # outs[:, target_index].sum().backward(retain_graph=True)
+        # indices = torch.LongTensor(range(outs.size(0)))
+        # targets_mask = (outs - outs.min()) / (outs.max() - outs.min()) > 0.5
+        # # print(indices[targets_mask])
+        # sum_labels = torch.zeros([7, 7])
         #
-        # # gradient의 평균을 구합니다. (alpha_k^c)
-        # a_k = torch.mean(self.backward_result, dim=(2, 3), keepdim=True)
-        # # self.foward_result를 이용하여 Grad-CAM을 계산합니다.
-        # out = torch.sum(a_k * self.forward_result, dim=1).cpu()
-        # # normalize
-        # out = (out + torch.abs(out)) / 2
-        # out = out / torch.max(out)
+        # for t_idx in indices[targets_mask]:
+        #
+        #     outs[t_idx].backward(retain_graph=True)
+        #     # gradient의 평균을 구합니다. (alpha_k^c)
+        #     a_k = torch.mean(self.backward_result, dim=(1, 2), keepdim=True)
+        #     # self.foward_result를 이용하여 Grad-CAM을 계산합니다.
+        #     out = torch.sum(a_k * self.forward_result, dim=0).cpu()
+        #     # normalize
+        #     out = (out + torch.abs(out)) / 2
+        #     sum_labels += out
+        #     print(self.label[t_idx.item()])
+        # out = sum_labels / torch.max(sum_labels)
         # out = F.upsample_bilinear(out.unsqueeze(0).unsqueeze(0), [224, 224])  # 4D로 바꿈
-        # ---------------------------------- for one targets ----------------------------------
-
-        # ---------------------------------- for batch targets ----------------------------------
-        targets_mask = (outs - outs.min()) / (outs.max() - outs.min()) > 0.5
-        sum_labels = torch.zeros([outs.size(0), 7, 7]).cuda()
-        for batch, target_mask in enumerate(targets_mask):  # batch 를 돌면서
-            indices = torch.LongTensor(range(outs.size(1)))
-            for idx in indices[target_mask]:
-                outs[batch, idx].backward(retain_graph=True)
-                # mean of gradient : (alpha_k^c)
-                a_k = torch.mean(self.backward_result[batch], dim=(1, 2), keepdim=True)
-                out = torch.sum(a_k * self.forward_result[batch], dim=0).cuda()
-                # normalize
-                out = (out + torch.abs(out)) / 2
-                sum_labels[batch] += out
-                print(self.label[idx.item()])
-
-            out = sum_labels[batch] / torch.max(sum_labels)
-            out = F.upsample_bilinear(out.unsqueeze(0).unsqueeze(0), [224, 224])  # 4D로 바꿈
-            # print(t_idx)
-            show_cam_on_image(img, out.cpu().detach().squeeze().numpy())
-
-        return 0
+        # # print(t_idx)
+        # show_cam_on_image(img, out.detach().squeeze().numpy())
+        return out.detach().squeeze().numpy()
 
     def forward_hook(self, _, input, output):
         self.forward_result = torch.squeeze(output)
@@ -99,11 +95,13 @@ if __name__ == '__main__':
         cam = heatmap + np.float32(img)
         cam = cam / np.max(cam)
         cv2.imshow("cam", np.uint8(255 * cam))
+
         cv2.imshow("mask", np.uint8(mask * 255))
         cv2.imshow("heatmap", np.uint8(heatmap * 255))
         # cv2.imshow("img", np.uint8(img * 255))
 
         cv2.waitKey()
+
 
     import os
     import cv2
@@ -112,13 +110,13 @@ if __name__ == '__main__':
 
     from vgg_training import VGG
 
-    model = VGG().cuda()
-    model.eval()
-    epoch = 19
+    model = VGG()
+    epoch = 51
     save_path = './saves'
     save_file_name = 'vgg_classification_voc'
     state_dict = torch.load(os.path.join(save_path, save_file_name) + '.{}.pth'.format(epoch))
     model.load_state_dict(state_dict)
+    model.eval()
 
     print('load...weights')
 
@@ -132,8 +130,6 @@ if __name__ == '__main__':
         img = cv2.imread(img_path, 1)
         img = np.float32(cv2.resize(img, (224, 224))) / 255
         input = preprocess_image(img)
-        input = torch.cat([input, input], dim=0).cuda()
-        # input = torch.randn(2, 3, 224, 224)
 
         # voc labels
         '''
@@ -144,5 +140,5 @@ if __name__ == '__main__':
         '''
 
         target_index = 14
-        grad_cam(input, target_index, img)
-        # show_cam_on_image(img, mask)
+        mask = grad_cam(input, target_index, img)
+        show_cam_on_image(img, mask)

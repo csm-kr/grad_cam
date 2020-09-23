@@ -69,7 +69,7 @@ class VGG(nn.Module):
             model_dict = self.features.state_dict()
             pretrained_dict = {k: v for k, v in std.items() if k in model_dict}  # 여기서 orderdict 가 아니기 때문에
             model_dict.update(pretrained_dict)
-            self.features.load_state_dict(model_dict)
+            self.features.load_state_dict(model_dict, strict=True)
 
     def init_conv2d(self):
         for c in self.features.children():
@@ -88,6 +88,7 @@ class VGG(nn.Module):
 if __name__ == "__main__":
 
     vgg = VGG(pretrained=True).to(device)
+    print(vgg)
     img = torch.FloatTensor(2, 3, 224, 224).to(device)
     print(vgg(img).size())
 
